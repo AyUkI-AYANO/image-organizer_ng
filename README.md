@@ -1,4 +1,4 @@
-# 图片整理器 v4.0（CLI + GUI）
+# 图片整理器 NG 5.0.0（CLI + Web UI）
 
 一个按图片内容自动分类的小工具，会将图片整理到：
 
@@ -11,12 +11,14 @@
 - `objects`（其他物品）
 - `unknown`（低置信度或低匹配分）
 
-## v4.0 更新
+## NG 5.0.0 重点升级
 
-- 识别策略升级：从“只看 Top-1 标签”升级为“融合 Top-K 预测 + 语义匹配打分”，降低误分类。
-- 分类逻辑升级：增加标签标准化、词级重叠匹配、精确匹配加权，提升类别命中率。
-- 置信机制升级：新增 `--min-category-score`，与 `--min-confidence` 双阈值联合判定 `unknown`。
-- GUI 增强：可直接配置 `Min category score`，更方便按数据集调参。
+- **算法优化**：分类由简单 Top-1 判断升级为 **Top-K 融合 + 分层语义加权**，并引入同义词归一化，降低标签噪声导致的误分类。
+- **精度优化**：
+  - Rank 衰减：高排名预测更高权重，避免低概率标签干扰。
+  - 置信度平滑：使用平方根平滑，抑制极端置信值对结果的“过拟合”。
+  - 词级重叠 + 短语精确匹配 + 子串弱匹配组合打分，更稳健。
+- **UI 全量升级**：从 Tk GUI 升级到 **现代化 Gradio Web UI**，交互更直观、参数调节更方便。
 
 ## 最简部署（推荐）
 
@@ -34,11 +36,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## GUI 模式
+## Web UI 模式
 
 ```bash
 python organize_images.py --gui
 ```
+
+启动后打开浏览器访问：
+
+- `http://127.0.0.1:7860`
 
 ## CLI 模式
 
@@ -49,22 +55,24 @@ python organize_images.py <图片目录> -o <输出目录>
 示例：
 
 ```bash
-python organize_images.py ./photos -o ./sorted_photos --min-confidence 0.25 --min-category-score 0.12
+python organize_images.py ./photos -o ./sorted_photos --min-confidence 0.22 --min-category-score 0.16 --topk 10
 ```
 
 可选参数：
 
 - `--move`：移动文件（默认复制）
-- `--min-confidence 0.2`：模型 Top-1 最低置信度（0~1），低于阈值放入 `unknown`
-- `--min-category-score 0.12`：类别语义匹配最低分（0~1），低于阈值放入 `unknown`
+- `--min-confidence 0.22`：模型 Top-1 最低置信度（0~1），低于阈值放入 `unknown`
+- `--min-category-score 0.16`：类别语义匹配最低分（0~1），低于阈值放入 `unknown`
+- `--topk 10`：参与融合的 Top-K 预测数量（建议 8~12）
 
-## 分类原理（v4.0）
+## 分类原理（NG 5.0.0）
 
 - 使用 `torchvision` 预训练 `MobileNetV3-Small`。
-- 对每张图片提取 Top-K ImageNet 标签及其置信度。
-- 对标签做标准化，并与类别关键词进行：
-  - 精确匹配
-  - 子串匹配
-  - 词级重叠匹配
-- 按置信度加权累计类别分数，选取得分最高类别。
-- 同时满足 `min-confidence` 和 `min-category-score` 才进入目标类别，否则归入 `unknown`。
+- 对每张图片提取 Top-K ImageNet 标签及置信度。
+- 对标签做标准化与同义词归一化（如 `automobile -> car`）。
+- 对每个类别进行三层评分：
+  - 精确短语匹配（高权重）
+  - 词级重叠匹配（中权重）
+  - 子串弱匹配（补偿权重）
+- 每个标签分数融合 `rank_weight` 和 `confidence_weight` 后累计。
+- 同时满足 `min-confidence` 与 `min-category-score` 才进入目标类别，否则归入 `unknown`。
