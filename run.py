@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-command launcher for Image Organizer v4 GUI."""
+"""One-command launcher for Image Organizer NG 5 Web UI."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REQUIRED_PACKAGES = ["torch", "torchvision", "PIL"]
+REQUIRED_PACKAGES = ["torch", "torchvision", "PIL", "gradio"]
 
 
 def ensure_dependencies() -> None:
