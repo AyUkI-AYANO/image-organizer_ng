@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-command launcher for Image Organizer NG 5 Web UI."""
+"""One-command launcher for Image Organizer NG 5.1 Web UI."""
 
 from __future__ import annotations
 
