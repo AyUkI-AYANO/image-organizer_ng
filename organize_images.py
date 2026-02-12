@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import re
 import shutil
@@ -232,6 +233,17 @@ class ClassificationResult:
     category_score: float
 
 
+@dataclass
+class ProcessedItem:
+    source: str
+    destination: str
+    action: str
+    category: str
+    label: str
+    confidence: float
+    category_score: float
+
+
 class ImageOrganizer:
     def __init__(self, topk: int = 10) -> None:
         try:
@@ -371,14 +383,18 @@ def organize(
     min_confidence: float,
     min_category_score: float,
     topk: int,
+    dry_run: bool = False,
+    report_path: Path | None = None,
 ) -> tuple[int, dict[str, int]]:
     organizer = ImageOrganizer(topk=topk)
     action = shutil.move if move else shutil.copy2
+    action_name = "move" if move else "copy"
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     total = 0
     stats: dict[str, int] = {}
+    processed_items: list[ProcessedItem] = []
     for image_path in iter_images(source_dir):
         total += 1
         result = organizer.classify(image_path)
@@ -392,12 +408,43 @@ def organize(
         category_dir.mkdir(parents=True, exist_ok=True)
 
         destination = unique_path(category_dir / image_path.name)
-        action(str(image_path), str(destination))
+        if not dry_run:
+            action(str(image_path), str(destination))
+
+        processed_items.append(
+            ProcessedItem(
+                source=str(image_path),
+                destination=str(destination),
+                action="dry-run" if dry_run else action_name,
+                category=category,
+                label=result.label,
+                confidence=result.confidence,
+                category_score=result.category_score,
+            )
+        )
 
         print(
             f"[{category.upper()}] {image_path} -> {destination} "
-            f"(label={result.label}, conf={result.confidence:.2%}, category_score={result.category_score:.3f})"
+            f"(label={result.label}, conf={result.confidence:.2%}, category_score={result.category_score:.3f}, action={'dry-run' if dry_run else action_name})"
         )
+
+    if report_path is not None:
+        report_payload = {
+            "version": "5.1.0",
+            "source_dir": str(source_dir.resolve()),
+            "output_dir": str(output_dir.resolve()),
+            "dry_run": dry_run,
+            "action": action_name,
+            "min_confidence": min_confidence,
+            "min_category_score": min_category_score,
+            "topk": topk,
+            "total": total,
+            "stats": stats,
+            "items": [item.__dict__ for item in processed_items],
+        }
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Report saved to: {report_path.resolve()}")
 
     print(f"\nDone. Processed {total} image(s).")
     return total, stats
@@ -446,6 +493,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Launch web GUI",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview classification and destinations without moving/copying files",
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="Optional JSON report output path",
+    )
     return parser.parse_args()
 
 
@@ -469,6 +526,8 @@ def launch_gui() -> None:
         min_conf: float,
         min_cat_score: float,
         topk: int,
+        dry_run: bool,
+        report_path: str,
     ) -> str:
         source_path = Path(source_dir.strip())
         output_path = Path(output_dir.strip() or "organized_images")
@@ -486,20 +545,26 @@ def launch_gui() -> None:
             min_confidence=min_conf,
             min_category_score=min_cat_score,
             topk=max(3, int(topk)),
+            dry_run=dry_run,
+            report_path=Path(report_path.strip()) if report_path.strip() else None,
         )
 
         lines = [f"✅ Done. Processed {total} image(s).", f"📁 Output: {output_path.resolve()}"]
+        if dry_run:
+            lines.append("🧪 Dry-run enabled: no files were moved/copied.")
+        if report_path.strip():
+            lines.append(f"🧾 Report: {Path(report_path.strip()).resolve()}")
         lines.append("\nCategory distribution:")
         for key in sorted(stats):
             lines.append(f"- {key}: {stats[key]}")
         return "\n".join(lines)
 
-    with gr.Blocks(theme=theme, title="Image Organizer NG 5.0.0") as app:
+    with gr.Blocks(theme=theme, title="Image Organizer NG 5.1.0") as app:
         gr.Markdown(
             """
-            # ✨ Image Organizer NG 5.0.0
-            **更优雅的界面 + 更稳健的分类算法**  
-            融合 Top-K 结果、词义归一化、分层打分策略，提升复杂场景的分类准确度。
+            # ✨ Image Organizer NG 5.1.0
+            **更优雅的界面 + 更稳健的分类算法 + 可追溯报告**  
+            融合 Top-K 结果、词义归一化、分层打分策略，并新增 Dry-Run 与 JSON 报告导出。
             """
         )
 
@@ -512,13 +577,29 @@ def launch_gui() -> None:
             min_score_input = gr.Slider(0, 1, value=0.16, step=0.01, label="Min category score")
             topk_input = gr.Slider(3, 20, value=10, step=1, label="Top-K predictions")
 
-        move_input = gr.Checkbox(label="Move files instead of copy", value=False)
+        with gr.Row():
+            move_input = gr.Checkbox(label="Move files instead of copy", value=False)
+            dry_run_input = gr.Checkbox(label="Dry-run (no file write)", value=False)
+
+        report_input = gr.Textbox(
+            label="Report path (optional)",
+            placeholder="./reports/organize_report.json",
+        )
         run_button = gr.Button("🚀 Start Organizing", variant="primary")
         output = gr.Textbox(label="Run summary", lines=12)
 
         run_button.click(
             fn=run_web_organize,
-            inputs=[source_input, output_input, move_input, min_conf_input, min_score_input, topk_input],
+            inputs=[
+                source_input,
+                output_input,
+                move_input,
+                min_conf_input,
+                min_score_input,
+                topk_input,
+                dry_run_input,
+                report_input,
+            ],
             outputs=output,
         )
 
@@ -549,6 +630,8 @@ def main() -> None:
         min_confidence=args.min_confidence,
         min_category_score=args.min_category_score,
         topk=max(3, args.topk),
+        dry_run=args.dry_run,
+        report_path=args.report,
     )
 
 
